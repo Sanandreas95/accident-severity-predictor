@@ -13,11 +13,11 @@ warnings.filterwarnings('ignore')
 
 
 
-# import os
-# import streamlit as st
+import os
+import streamlit as st
 
-# st.write("Current working directory:", os.getcwd())
-# st.write("Files visible here:", os.listdir())
+st.write("Current working directory:", os.getcwd())
+st.write("Files visible here:", os.listdir())
 
 
 

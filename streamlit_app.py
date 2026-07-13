@@ -79,9 +79,9 @@ def load_model_and_scaler():
     """Load pre-trained XGBoost model and StandardScaler"""
     try:
         # Try loading with joblib
-        model = joblib.load('xgb_model.pkl')
-        scaler = joblib.load('scaler.pkl')
-        feature_columns = joblib.load('feature_columns.pkl')
+        model = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/app/xgb_model.pkl')
+        scaler = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/app/scaler.pkl')
+        feature_columns = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/app/feature_columns.pkl')
         return model, scaler, feature_columns
     except FileNotFoundError:
         st.error("❌ Model files not found. Please ensure xgb_model.pkl, scaler.pkl, and feature_columns.pkl are in the app directory.")

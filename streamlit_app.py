@@ -8,6 +8,20 @@ import plotly.graph_objects as go
 import warnings
 warnings.filterwarnings('ignore')
 
+
+
+
+
+
+import os
+import streamlit as st
+
+st.write("Current working directory:", os.getcwd())
+st.write("Files visible here:", os.listdir())
+
+
+
+
 # =====================================================
 # PAGE CONFIGURATION
 # =====================================================
@@ -79,9 +93,9 @@ def load_model_and_scaler():
     """Load pre-trained XGBoost model and StandardScaler"""
     try:
         # Try loading with joblib
-        model = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/app/xgb_model.pkl')
-        scaler = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/app/scaler.pkl')
-        feature_columns = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/app/feature_columns.pkl')
+        model = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/accident-severity-predictor/xgb_model.pkl')
+        scaler = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/accident-severity-predictor/scaler.pkl')
+        feature_columns = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/accident-severity-predictor/feature_columns.pkl')
         return model, scaler, feature_columns
     except FileNotFoundError:
         st.error("❌ Model files not found. Please ensure xgb_model.pkl, scaler.pkl, and feature_columns.pkl are in the app directory.")

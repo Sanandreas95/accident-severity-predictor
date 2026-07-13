@@ -88,18 +88,39 @@ st.markdown("""
 # LOAD MODEL AND SCALER
 # =====================================================
 
+# @st.cache_resource
+# def load_model_and_scaler():
+#     """Load pre-trained XGBoost model and StandardScaler"""
+#     try:
+#         # Try loading with joblib
+#         model = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/accident-severity-predictor/xgb_model.pkl')
+#         scaler = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/accident-severity-predictor/scaler.pkl')
+#         feature_columns = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/accident-severity-predictor/feature_columns.pkl')
+#         return model, scaler, feature_columns
+#     except FileNotFoundError:
+#         st.error("❌ Model files not found. Please ensure xgb_model.pkl, scaler.pkl, and feature_columns.pkl are in the app directory.")
+#         st.stop()
+
+
+
+
+
 @st.cache_resource
 def load_model_and_scaler():
-    """Load pre-trained XGBoost model and StandardScaler"""
     try:
-        # Try loading with joblib
-        model = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/accident-severity-predictor/xgb_model.pkl')
-        scaler = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/accident-severity-predictor/scaler.pkl')
-        feature_columns = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/accident-severity-predictor/feature_columns.pkl')
+        model = joblib.load("xgb_model.pkl")
+        scaler = joblib.load("scaler.pkl")
+        feature_columns = joblib.load("feature_columns.pkl")
+
         return model, scaler, feature_columns
-    except FileNotFoundError:
-        st.error("❌ Model files not found. Please ensure xgb_model.pkl, scaler.pkl, and feature_columns.pkl are in the app directory.")
+
+    except Exception as e:
+        st.error(f"❌ Error loading model files: {e}")
         st.stop()
+
+
+
+
 
 model, scaler, feature_columns = load_model_and_scaler()
 

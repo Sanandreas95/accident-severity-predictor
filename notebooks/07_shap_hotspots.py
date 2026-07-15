@@ -1,0 +1,541 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import shap
+import xgboost as xgb
+from sklearn.cluster import DBSCAN
+from sklearn.preprocessing import StandardScaler
+import folium
+from folium.plugins import HeatMap, MarkerCluster
+import warnings
+warnings.filterwarnings('ignore')
+
+# Set style
+sns.set_style("whitegrid")
+plt.rcParams['figure.figsize'] = (16, 10)
+
+
+# DAY 7 — SHAP EXPLAINABILITY + HOTSPOT ANALYSIS
+
+
+print("="*90)
+print("DAY 7 — SHAP EXPLAINABILITY + HOTSPOT ANALYSIS (SAN FRANCISCO)")
+print("="*90)
+
+
+# MORNING: PART 1 — LOAD MODELS & DATA
+
+
+print("\n" + "="*90)
+print("MORNING: SHAP EXPLAINABILITY")
+print("="*90)
+print(f"""
+DECISION: Use SHAP (SHapley Additive exPlanations) to interpret XGBoost predictions.
+
+WHAT IS SHAP?
+  - Game theory approach to explain model predictions
+  - Shows how much each feature contributes to pushing prediction away from baseline
+  - More rigorous than feature importance (which only shows variance, not direction)
+
+TWO VISUALIZATIONS:
+  1. SHAP Summary Plot (Bar) — Average |SHAP value| for each feature
+     Interpretation: Which features push predictions up/down on average?
+     
+  2. SHAP Force Plot — Single prediction breakdown
+     Interpretation: Why did the model predict "Severe" or "Non-Severe" for this accident?
+""")
+
+print(f"\n✓ Loading data and models...")
+
+# Load cleaned California data
+df = pd.read_csv('/Volumes/Work/DS_Mandi/Capstone 2/data/california_clean.csv')
+print(f"  Loaded california_clean.csv: {len(df):,} rows")
+
+# Load train/test data
+X_train = pd.read_csv('/Volumes/Work/DS_Mandi/Capstone 2/data/X_train.csv')
+X_test = pd.read_csv('/Volumes/Work/DS_Mandi/Capstone 2/data/X_test.csv')
+y_train = pd.read_csv('/Volumes/Work/DS_Mandi/Capstone 2/data/y_train.csv').squeeze()
+y_test = pd.read_csv('/Volumes/Work/DS_Mandi/Capstone 2/data/y_test.csv').squeeze()
+print(f"  Loaded train/test split")
+
+# Re-train XGBoost model for SHAP
+print(f"  Re-training XGBoost model for SHAP...")
+scale_pos_weight = y_train.value_counts()[0] / y_train.value_counts()[1]
+
+xgb_model = xgb.XGBClassifier(
+    n_estimators=500,
+    max_depth=7,
+    learning_rate=0.1,
+    scale_pos_weight=scale_pos_weight,
+    eval_metric='logloss',
+    random_state=42,
+    n_jobs=-1,
+    verbosity=0
+)
+xgb_model.fit(X_train, y_train, verbose=False)
+print(f"  ✓ XGBoost model ready for SHAP")
+
+
+# MORNING: PART 2 — SHAP SUMMARY PLOT
+
+
+print(f"\n✓ Computing SHAP values (this may take 1-2 minutes)...")
+
+# Create SHAP explainer
+explainer = shap.TreeExplainer(xgb_model)
+
+# Compute SHAP values for test set (use sample to speed up)
+# Use first 5000 samples for visualization (full computation takes time)
+sample_size = min(5000, len(X_test))
+X_test_sample = X_test.iloc[:sample_size]
+shap_values = explainer.shap_values(X_test_sample)
+
+print(f"  ✓ SHAP values computed for {sample_size:,} test samples")
+
+# Create visualizations
+fig = plt.figure(figsize=(16, 10))
+
+# SHAP Summary Plot (Bar) — Mean absolute SHAP values
+ax1 = plt.subplot(2, 2, 1)
+shap.summary_plot(shap_values, X_test_sample, plot_type="bar", show=False)
+plt.title('CHART 1: SHAP Summary Plot — Feature Importance\n(Average |SHAP value| across all samples)', 
+          fontsize=12, fontweight='bold', pad=10)
+plt.xlabel('Mean |SHAP value|', fontsize=11, fontweight='bold')
+plt.ylabel('Feature', fontsize=11, fontweight='bold')
+
+
+# MORNING: PART 3 — FORCE PLOT (ONE SAMPLE)
+
+
+print(f"\n✓ Creating SHAP Force Plot for sample prediction...")
+
+# Select an interesting sample (one with high SHAP variance)
+# Choose a severe accident (class 1) for interpretability
+severe_indices = X_test_sample[y_test.iloc[:sample_size] == 1].index.tolist()
+
+if severe_indices:
+    sample_idx = severe_indices[len(severe_indices)//2]  # Middle sample
+    sample_shap = shap_values[X_test_sample.index.get_loc(sample_idx)]
+    sample_features = X_test_sample.iloc[X_test_sample.index.get_loc(sample_idx)]
+    
+    print(f"  Sample accident #{sample_idx}:")
+    print(f"    Actual: Severe (class=1)")
+    print(f"    Predicted probability: {xgb_model.predict_proba(X_test_sample.loc[[sample_idx]])[:, 1][0]:.2%}")
+    print(f"    Top 3 factors pushing prediction toward SEVERE:")
+    
+    # Get top SHAP values (largest impacts)
+    top_indices = np.argsort(np.abs(sample_shap))[-3:][::-1]
+    for rank, idx in enumerate(top_indices, 1):
+        feature = X_test_sample.columns[idx]
+        shap_val = sample_shap[idx]
+        feature_val = sample_features.iloc[idx]
+        direction = "↑ INCREASES" if shap_val > 0 else "↓ DECREASES"
+        print(f"      {rank}. {feature}: {feature_val:.2f} ({direction} severity by {abs(shap_val):.3f})")
+
+# Create Force Plot as matplotlib (since Jupyter rendering not available)
+ax2 = plt.subplot(2, 2, 2)
+ax2.text(0.5, 0.5, f"""
+SHAP FORCE PLOT: Sample Severe Accident (#{sample_idx})
+
+Actual Class: 1 (Severe)
+Predicted Probability: {xgb_model.predict_proba(X_test_sample.loc[[sample_idx]])[:, 1][0]:.1%}
+
+INTERPRETATION:
+Base value (model average): {explainer.expected_value:.3f}
+
+Features pushing toward SEVERE:
+""", ha='center', va='center', fontsize=11, family='monospace',
+    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+ax2.set_xlim(0, 1)
+ax2.set_ylim(0, 1)
+ax2.axis('off')
+ax2.set_title('CHART 2: SHAP Force Plot (Single Prediction)\nWhy did the model predict this accident as SEVERE?',
+              fontsize=12, fontweight='bold', pad=10)
+
+
+# MORNING: PART 4 — SHAP DEPENDENCE PLOT
+
+
+print(f"\n✓ Creating SHAP dependence plots...")
+
+# Top 3 features
+top_features_idx = np.argsort(np.mean(np.abs(shap_values), axis=0))[-3:][::-1]
+top_feature_names = [X_test_sample.columns[i] for i in top_features_idx]
+
+ax3 = plt.subplot(2, 2, 3)
+# Manually create scatter for top feature
+top_feature_idx = top_features_idx[0]
+feature_name = top_feature_names[0]
+
+scatter = ax3.scatter(X_test_sample.iloc[:, top_feature_idx], 
+                      shap_values[:, top_feature_idx],
+                      c=y_test.iloc[:sample_size], cmap='RdYlGn_r', alpha=0.6, s=30)
+ax3.set_xlabel(f'{feature_name}', fontsize=11, fontweight='bold')
+ax3.set_ylabel('SHAP Value', fontsize=11, fontweight='bold')
+ax3.set_title(f'CHART 3: SHAP Dependence — Top Feature: {feature_name}\n(How feature value affects prediction)',
+              fontsize=12, fontweight='bold')
+ax3.grid(True, alpha=0.3)
+plt.colorbar(scatter, ax=ax3, label='Target (0=Non-Severe, 1=Severe)')
+
+
+# MORNING: PART 5 — SHAP INSIGHTS
+
+
+ax4 = plt.subplot(2, 2, 4)
+mean_abs_shap = np.mean(np.abs(shap_values), axis=0)
+top_5_features = np.argsort(mean_abs_shap)[-5:][::-1]
+
+insights_text = "KEY SHAP INSIGHTS:\n\n"
+insights_text += f"Top 5 Features Explaining Predictions:\n"
+
+for rank, idx in enumerate(top_5_features, 1):
+    feature = X_test_sample.columns[idx]
+    avg_shap = mean_abs_shap[idx]
+    insights_text += f"{rank}. {feature}: avg |SHAP|={avg_shap:.4f}\n"
+
+insights_text += f"""
+INTERPRETATION:
+  • SHAP shows which features drive model decisions
+  • Larger SHAP value = stronger influence on prediction
+  • Positive SHAP = pushes toward SEVERE (class=1)
+  • Negative SHAP = pushes toward NON-SEVERE (class=0)
+
+BUSINESS USE:
+  • Explain to insurance company why accident rated as "Severe"
+  • Identify which factors (weather, hour, road type) matter most
+  • Tune safety interventions based on key drivers
+"""
+
+ax4.text(0.05, 0.95, insights_text, transform=ax4.transAxes, 
+         fontsize=10, verticalalignment='top', family='monospace',
+         bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+ax4.axis('off')
+
+plt.tight_layout()
+plt.savefig('/Volumes/Work/DS_Mandi/Capstone 2/results/07_shap_explainability.png', dpi=300, bbox_inches='tight')
+print(f"\n✓ Saved: /Volumes/Work/DS_Mandi/Capstone 2/results/07_shap_explainability.png")
+
+
+# AFTERNOON: PART 1 — HOTSPOT ANALYSIS SETUP (SAN FRANCISCO)
+
+
+print("\n" + "="*90)
+print("AFTERNOON: HOTSPOT ANALYSIS WITH DBSCAN (SAN FRANCISCO)")
+print("="*90)
+print(f"""
+DECISION: Use DBSCAN to identify accident hotspots in San Francisco.
+
+WHAT IS DBSCAN?
+  - Density-Based Spatial Clustering
+  - Groups nearby points (accidents) without requiring fixed # of clusters
+  - Marks outliers (isolated accidents) as noise
+
+PARAMETERS:
+  - eps: Maximum distance between points to be considered neighbors (in km)
+         eps=0.5 km ≈ 0.31 miles → ~6 city blocks
+  - min_samples: Minimum points to form a cluster
+                min_samples=5 → hotspot if ≥5 accidents within 0.5 km
+
+WORKFLOW:
+  1. Filter for San Francisco severe accidents only
+  2. Extract lat/long coordinates
+  3. Convert to kilometers (standardize for distance calculation)
+  4. Run DBSCAN clustering
+  5. Identify top 10-15 clusters (hotspots)
+  6. Create Folium maps (heatmap + cluster visualization)
+""")
+
+print(f"\n✓ Loading original data with coordinates...")
+
+# Load original California data (has lat/long)
+df_ca_orig = pd.read_csv('/Volumes/Work/DS_Mandi/Capstone 2/data/california_clean.csv')
+print(f"  Loaded original data: {len(df_ca_orig):,} rows")
+
+# Check available cities
+print(f"\n  Available cities (top 10 by severe accidents):")
+city_counts = df_ca_orig[df_ca_orig['target_binary'] == 1]['City'].value_counts().head(10)
+for city, count in city_counts.items():
+    print(f"    {city}: {count:,}")
+
+# Filter for San Francisco severe accidents
+sf_severe = df_ca_orig[(df_ca_orig['City'] == 'San Francisco') & 
+                        (df_ca_orig['target_binary'] == 1)].copy()
+
+if len(sf_severe) == 0:
+    print(f"\n⚠️  San Francisco not found in exact match. Trying with string contains...")
+    sf_severe = df_ca_orig[(df_ca_orig['City'].str.contains('San Francisco', case=False, na=False)) & 
+                            (df_ca_orig['target_binary'] == 1)].copy()
+
+print(f"\n✓ San Francisco severe accidents:")
+print(f"  Total: {len(sf_severe):,}")
+
+if len(sf_severe) > 0:
+    print(f"  Lat range: {sf_severe['Start_Lat'].min():.4f} to {sf_severe['Start_Lat'].max():.4f}")
+    print(f"  Lng range: {sf_severe['Start_Lng'].min():.4f} to {sf_severe['Start_Lng'].max():.4f}")
+    
+    # Extract coordinates
+    coords = sf_severe[['Start_Lat', 'Start_Lng']].values
+    
+    # Convert to kilometers for distance calculation
+    coords_km = coords.copy()
+    coords_km[:, 0] = coords[:, 0] * 111  # latitude to km
+    coords_km[:, 1] = coords[:, 1] * 111 * np.cos(np.radians(coords[:, 0].mean()))  # longitude to km
+    
+    
+    # AFTERNOON: PART 2 — DBSCAN CLUSTERING
+    
+    
+    print(f"\n✓ Running DBSCAN clustering...")
+    
+    # Run DBSCAN
+    dbscan = DBSCAN(eps=0.5, min_samples=5)  # eps in km
+    sf_severe['cluster'] = dbscan.fit_predict(coords_km)
+    
+    n_clusters = len(set(sf_severe['cluster'])) - (1 if -1 in sf_severe['cluster'] else 0)
+    n_noise = list(sf_severe['cluster']).count(-1)
+    
+    print(f"\n  Clustering results:")
+    print(f"    Clusters found: {n_clusters}")
+    print(f"    Noise points (isolated): {n_noise:,}")
+    print(f"    Clustered points: {len(sf_severe) - n_noise:,}")
+    
+    # Analyze clusters
+    cluster_stats = sf_severe[sf_severe['cluster'] != -1].groupby('cluster').agg({
+        'cluster': 'size',  # count
+        'Start_Lat': 'mean',
+        'Start_Lng': 'mean'
+    }).rename(columns={'cluster': 'count'})
+    
+    cluster_stats = cluster_stats.sort_values('count', ascending=False)
+    
+    print(f"\n✓ Top 15 hotspot clusters:")
+    print(f"  {'Cluster':<8} {'Accidents':<12} {'Lat':<10} {'Lng':<10}")
+    print(f"  {'-'*40}")
+    
+    top_clusters = cluster_stats.head(15)
+    for idx, (cluster_id, row) in enumerate(top_clusters.iterrows(), 1):
+        print(f"  {int(cluster_id):<8} {int(row['count']):<12} {row['Start_Lat']:<10.4f} {row['Start_Lng']:<10.4f}")
+    
+    # Calculate hotspot share
+    total_severe_sf = len(sf_severe)
+    top_15_severe = top_clusters['count'].sum()
+    top_15_pct = 100 * top_15_severe / total_severe_sf
+    
+    print(f"\n✓ Hotspot concentration:")
+    print(f"  Top 15 clusters: {int(top_15_severe):,} severe accidents ({top_15_pct:.1f}%)")
+    print(f"  Interpretation: Top 15 hotspots account for {top_15_pct:.0f}% of ALL severe accidents in SF")
+    print(f"  ROI Focus: Targeting these 15 zones could prevent ~{top_15_pct:.0f}% of severe accidents")
+    
+    
+    # AFTERNOON: PART 3 — FOLIUM HEATMAP
+    
+    
+    print(f"\n✓ Creating Folium heatmap...")
+    
+    # Center map on SF
+    center_lat = sf_severe['Start_Lat'].mean()
+    center_lng = sf_severe['Start_Lng'].mean()
+    
+    # Heatmap
+    m_heat = folium.Map(
+        location=[center_lat, center_lng],
+        zoom_start=12,
+        tiles='OpenStreetMap'
+    )
+    
+    # Add all severe accidents as heatmap layer
+    heat_data = [[row['Start_Lat'], row['Start_Lng']] for idx, row in sf_severe.iterrows()]
+    HeatMap(heat_data, radius=20, blur=15, max_zoom=13, gradient={0.2: 'blue', 0.4: 'green', 0.6: 'yellow', 0.8: 'orange', 1.0: 'red'}).add_to(m_heat)
+    
+    # Add text annotation
+    folium.Marker(
+        location=[center_lat + 0.02, center_lng - 0.05],
+        popup=f"San Francisco Severe Accident Hotspots<br>Total: {len(sf_severe):,} accidents",
+        tooltip="SF Severe Accident Heatmap"
+    ).add_to(m_heat)
+    
+    m_heat.save('/Volumes/Work/DS_Mandi/Capstone 2/results/07_sf_hotspots_heatmap.html')
+    print(f"  ✓ Saved: /Volumes/Work/DS_Mandi/Capstone 2/results/07_sf_hotspots_heatmap.html")
+    
+    
+    # AFTERNOON: PART 4 — FOLIUM CLUSTER MAP
+    
+    
+    print(f"\n✓ Creating Folium cluster map with top hotspots...")
+    
+    # Cluster map
+    m_cluster = folium.Map(
+        location=[center_lat, center_lng],
+        zoom_start=12,
+        tiles='OpenStreetMap'
+    )
+    
+    # Color palette for top clusters
+    colors = ['red', 'darkred', 'orange', 'darkgreen', 'green', 'blue', 'purple', 'gray', 'pink', 'darkblue',
+              'lightred', 'cadetblue', 'darkpurple', 'white', 'beige']
+    
+    # Add top 15 clusters
+    for rank, (cluster_id, row) in enumerate(top_clusters.iterrows(), 1):
+        color = colors[rank - 1] if rank <= len(colors) else 'gray'
+        
+        # Count accidents in this cluster
+        cluster_count = int(row['count'])
+        cluster_pct = 100 * cluster_count / total_severe_sf
+        
+        # Cluster center circle
+        folium.CircleMarker(
+            location=[row['Start_Lat'], row['Start_Lng']],
+            radius=15 + rank * 2,  # Larger for top clusters
+            popup=f"""
+            <b>Hotspot #{rank}</b><br>
+            Cluster ID: {int(cluster_id)}<br>
+            Severe Accidents: {cluster_count:,}<br>
+            Share of SF Total: {cluster_pct:.1f}%<br>
+            Lat: {row['Start_Lat']:.4f}<br>
+            Lng: {row['Start_Lng']:.4f}
+            """,
+            tooltip=f"Hotspot #{rank}: {cluster_count:,} accidents",
+            color=color,
+            fill=True,
+            fillColor=color,
+            fillOpacity=0.7,
+            weight=2
+        ).add_to(m_cluster)
+    
+    
+    
+    
+    
+    
+    
+    
+
+    # Add individual accident points (subset for performance)
+    # subset_accidents = sf_severe[sf_severe['cluster'] != -1].sample(min(1000, len(sf_severe)))
+    clustered_accidents = sf_severe[sf_severe['cluster'] != -1]
+
+    subset_accidents = clustered_accidents.sample(
+        n=min(1000, len(clustered_accidents)),
+        random_state=42
+)
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    for idx, row in subset_accidents.iterrows():
+        cluster_rank = top_clusters.reset_index()[top_clusters.reset_index()['cluster'] == row['cluster']].index.tolist()
+        if cluster_rank:
+            rank = cluster_rank[0] + 1
+            if rank <= 15:
+                color = colors[rank - 1]
+            else:
+                color = 'gray'
+        else:
+            color = 'gray'
+        
+        folium.CircleMarker(
+            location=[row['Start_Lat'], row['Start_Lng']],
+            radius=3,
+            color=color,
+            fill=True,
+            fillColor=color,
+            fillOpacity=0.6,
+            weight=1,
+            popup=f"Severe Accident<br>Lat: {row['Start_Lat']:.4f}, Lng: {row['Start_Lng']:.4f}"
+        ).add_to(m_cluster)
+    
+    m_cluster.save('/Volumes/Work/DS_Mandi/Capstone 2/results/07_sf_hotspots_clusters.html')
+    print(f"  ✓ Saved: /Volumes/Work/DS_Mandi/Capstone 2/results/07_sf_hotspots_clusters.html")
+    
+    
+    # AFTERNOON: PART 5 — HOTSPOT STATISTICS VISUALIZATION
+    
+    
+    print(f"\n✓ Creating hotspot statistics visualization...")
+    
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    
+    # Chart 1: Top 15 clusters by accident count
+    ax1 = axes[0, 0]
+    top_15_data = cluster_stats.head(15).reset_index()
+    bars = ax1.barh(range(len(top_15_data)), top_15_data['count'], color='#d32f2f', alpha=0.8, edgecolor='black')
+    ax1.set_yticks(range(len(top_15_data)))
+    ax1.set_yticklabels([f"Hotspot #{i+1}" for i in range(len(top_15_data))], fontsize=10)
+    ax1.set_xlabel('Number of Severe Accidents', fontsize=11, fontweight='bold')
+    ax1.set_title('CHART 1: Top 15 San Francisco Hotspot Zones (Severe Accidents)', fontsize=12, fontweight='bold')
+    ax1.grid(axis='x', alpha=0.3)
+    
+    for i, (bar, count) in enumerate(zip(bars, top_15_data['count'])):
+        ax1.text(count + 2, i, f"{int(count)}", va='center', fontsize=9, fontweight='bold')
+    
+    # Chart 2: Cumulative percentage
+    ax2 = axes[0, 1]
+    sorted_clusters = cluster_stats.sort_values('count', ascending=False)
+    cumsum = sorted_clusters['count'].cumsum()
+    cumsum_pct = 100 * cumsum / total_severe_sf
+    
+    ax2.plot(range(len(cumsum_pct.head(20))), cumsum_pct.head(20).values, marker='o', linewidth=2.5, markersize=8, color='#1976d2')
+    ax2.fill_between(range(len(cumsum_pct.head(20))), cumsum_pct.head(20).values, alpha=0.3, color='#1976d2')
+    ax2.axhline(y=80, color='red', linestyle='--', linewidth=2, label='80% concentration')
+    ax2.set_xlabel('Number of Hotspots', fontsize=11, fontweight='bold')
+    ax2.set_ylabel('Cumulative % of Severe Accidents', fontsize=11, fontweight='bold')
+    ax2.set_title('CHART 2: Hotspot Concentration (Pareto Principle)', fontsize=12, fontweight='bold')
+    ax2.grid(True, alpha=0.3)
+    ax2.legend()
+    ax2.set_ylim([0, 100])
+    
+    # Chart 3: Cluster size distribution
+    ax3 = axes[1, 0]
+    cluster_sizes = cluster_stats[cluster_stats.index != -1]['count'].values
+    ax3.hist(cluster_sizes, bins=30, color='#388e3c', alpha=0.8, edgecolor='black')
+    ax3.set_xlabel('Accidents per Cluster', fontsize=11, fontweight='bold')
+    ax3.set_ylabel('Number of Clusters', fontsize=11, fontweight='bold')
+    ax3.set_title('CHART 3: Distribution of Cluster Sizes', fontsize=12, fontweight='bold')
+    ax3.axvline(x=cluster_sizes.mean(), color='red', linestyle='--', linewidth=2, label=f'Mean: {cluster_sizes.mean():.1f}')
+    ax3.legend()
+    ax3.grid(axis='y', alpha=0.3)
+    
+    # Chart 4: Business impact summary
+    ax4 = axes[1, 1]
+    ax4.text(0.5, 0.95, f"""HOTSPOT ANALYSIS SUMMARY
+
+San Francisco Severe Accidents: {total_severe_sf:,}
+
+TOP 15 HOTSPOTS:
+  • Total severe accidents: {int(top_15_severe):,}
+  • Share of SF total: {top_15_pct:.1f}%
+  • Number of clusters: 15
+  • Average per hotspot: {int(top_15_severe/15):,} accidents
+
+ROI OPPORTUNITY:
+  • Targeting top 15 hotspots → prevents {top_15_pct:.0f}% of severe accidents
+  • High-impact intervention zones identified
+  • Resource allocation: focus on top 5 zones for {100*top_clusters.head(5)['count'].sum()/total_severe_sf:.0f}% coverage
+
+RECOMMENDED ACTIONS:
+  1. Deploy traffic officers at peak hours (from Day 4 EDA)
+  2. Improve road infrastructure (signals, markings)
+  3. Weather monitoring + alerts
+  4. Insurance surcharges in hotspot zones
+  5. Targeted safety campaigns
+
+BUSINESS VALUE:
+  • Quantified severity hotspots with lat/long
+  • Data-driven resource allocation
+  • Measurable impact targets
+""", transform=ax4.transAxes, fontsize=11, verticalalignment='top', family='monospace',
+         bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.9))
+    ax4.axis('off')
+    
+    plt.tight_layout()
+    plt.savefig('/Volumes/Work/DS_Mandi/Capstone 2/results/07_hotspot_analysis_sf.png', dpi=300, bbox_inches='tight')
+    print(f"  ✓ Saved: /Volumes/Work/DS_Mandi/Capstone 2/results/07_hotspot_analysis_sf.png")
+    
+    
+    

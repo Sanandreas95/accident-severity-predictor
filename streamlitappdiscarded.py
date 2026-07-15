@@ -1,13 +1,26 @@
-
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
+import pickle
 from sklearn.preprocessing import StandardScaler
 import plotly.graph_objects as go
 import warnings
 warnings.filterwarnings('ignore')
+
+
+
+
+
+
+# import os
+# import streamlit as st
+
+# st.write("Current working directory:", os.getcwd())
+# st.write("Files visible here:", os.listdir())
+
+
+
 
 
 # PAGE CONFIGURATION
@@ -17,11 +30,11 @@ st.set_page_config(
     page_title="Accident Severity Risk Predictor",
     page_icon="🚗",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 
-# CUSTOM CSS STYLING
+# CUSTOM CSS FOR BETTER STYLING
 
 
 st.markdown("""
@@ -72,77 +85,44 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# LOAD MODEL, SCALER, THRESHOLD, AND METRICS
+# LOAD MODEL AND SCALER
+
+
+# @st.cache_resource
+# def load_model_and_scaler():
+#     """Load pre-trained XGBoost model and StandardScaler"""
+#     try:
+#         # Try loading with joblib
+#         model = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/accident-severity-predictor/xgb_model.pkl')
+#         scaler = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/accident-severity-predictor/scaler.pkl')
+#         feature_columns = joblib.load('/Volumes/Work/DS_Mandi/Capstone 2/accident-severity-predictor/feature_columns.pkl')
+#         return model, scaler, feature_columns
+#     except FileNotFoundError:
+#         st.error("❌ Model files not found. Please ensure xgb_model.pkl, scaler.pkl, and feature_columns.pkl are in the app directory.")
+#         st.stop()
+
+
+
 
 
 @st.cache_resource
-def load_model_and_artifacts():
-    """Load pre-trained XGBoost model, scaler, features, threshold, and metrics"""
+def load_model_and_scaler():
     try:
-        # Load model and preprocessing artifacts
         model = joblib.load("xgb_model.pkl")
         scaler = joblib.load("scaler.pkl")
         feature_columns = joblib.load("feature_columns.pkl")
-        
-        # Load optimal threshold
-        try:
-            optimal_threshold = joblib.load("optimal_threshold.pkl")
-        except:
-            optimal_threshold = 0.65  # Default balanced threshold
-        
-        # Load final metrics
-        try:
-            final_metrics = joblib.load("final_metrics.pkl")
-        except:
-            final_metrics = {
-                'accuracy': 0.77,
-                'precision': 0.48,
-                'recall': 0.67,
-                'f1': 0.56,
-                'roc_auc': 0.85,
-                'threshold': optimal_threshold
-            }
-        
-        return model, scaler, feature_columns, optimal_threshold, final_metrics
-    
-    except FileNotFoundError as e:
-        st.error(f"❌ Error: Model files not found - {e}")
-        st.error("Please ensure these files are in the app directory:")
-        st.error("- xgb_model.pkl")
-        st.error("- scaler.pkl")
-        st.error("- feature_columns.pkl")
-        st.error("- optimal_threshold.pkl")
-        st.error("- final_metrics.pkl")
-        st.stop()
-    
+
+        return model, scaler, feature_columns
+
     except Exception as e:
-        st.error(f"❌ Error loading artifacts: {e}")
+        st.error(f"❌ Error loading model files: {e}")
         st.stop()
 
-# Load all artifacts
-model, scaler, feature_columns, OPTIMAL_THRESHOLD, final_metrics = load_model_and_artifacts()
 
 
-# DISPLAY MODEL PERFORMANCE IN SIDEBAR
 
 
-with st.sidebar:
-    st.markdown("### 📊 Model Performance")
-    st.markdown("**Test Set Metrics:**")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Accuracy", f"{final_metrics.get('accuracy', 0.77):.1%}")
-        st.metric("Precision", f"{final_metrics.get('precision', 0.48):.1%}")
-    
-    with col2:
-        st.metric("Recall", f"{final_metrics.get('recall', 0.67):.1%}")
-        st.metric("ROC-AUC", f"{final_metrics.get('roc_auc', 0.85):.1%}")
-    
-    st.divider()
-    st.markdown("**Optimization:**")
-    st.info(f"✅ Using optimized threshold: **{OPTIMAL_THRESHOLD}**")
-    st.markdown("*Model tuned for balanced precision & recall*")
+model, scaler, feature_columns = load_model_and_scaler()
 
 
 # TITLE AND DESCRIPTION
@@ -152,7 +132,7 @@ st.markdown("<h1>🚗 Accident Severity Risk Predictor</h1>", unsafe_allow_html=
 st.markdown("""
 <div class="subheader">
     Predict the risk of severe accidents based on time, weather, and road conditions.
-    <br/>Built on 1744915 historical accident records | XGBoost ML Model | California
+    <br/>Built on 7.7M historical accident records | XGBoost ML Model
 </div>
 """, unsafe_allow_html=True)
 
@@ -176,7 +156,7 @@ with col1:
     day_type = st.selectbox(
         "Day Type",
         options=["Weekday", "Weekend"],
-        help="Weekends typically have different traffic patterns"
+        help="Weekdays show slightly higher severity rates"
     )
     is_weekend = 1 if day_type == "Weekend" else 0
     
@@ -223,12 +203,12 @@ feature_dict = {}
 
 # Time features
 feature_dict['hour'] = hour
-feature_dict['day_of_week'] = 5 if is_weekend else 2  # Saturday if weekend, Wed if weekday
+feature_dict['day_of_week'] = 5 if is_weekend else 2  # Saturday if weekend, Wed if weekday (midpoints)
 feature_dict['month'] = 6  # Default to June (mid-year)
-feature_dict['year'] = 2023  # Latest year in training
+feature_dict['year'] = 2023  # Latest year
 feature_dict['is_weekend'] = is_weekend
 feature_dict['is_rush_hour'] = is_rush_hour
-feature_dict['season'] = 2  # Summer (default)
+feature_dict['season_encoded'] = 2  # Summer (default)
 
 # Weather numeric features
 feature_dict['Temperature(F)'] = temperature
@@ -238,16 +218,29 @@ feature_dict['Wind_Speed(mph)'] = 10  # Default
 feature_dict['Precipitation(in)'] = 0  # Default (no rain)
 feature_dict['Pressure(in)'] = 29.9  # Default
 
+# # Weather categorical features (one-hot encoded)
+# weather_options = ["Clear", "Cloudy", "Fog", "Rain", "Snow", "Wind", "Other",
+#     "Unknown"]
+# for weather in weather_options:
+#     feature_dict[f'weather_{weather}'] = 1 if weather == weather_condition else 0
+
+
+
 # Weather categorical features (one-hot encoded)
-# Initialize all weather columns to 0
+
+# Initialize all weather columns expected by the model
 for col in feature_columns:
     if col.startswith('weather_'):
         feature_dict[col] = 0
 
 # Set the selected weather condition to 1
 selected_weather = f'weather_{weather_condition}'
-if selected_weather in feature_columns:
+
+if selected_weather in feature_dict:
     feature_dict[selected_weather] = 1
+
+
+
 
 # Time-of-day features
 feature_dict['is_night'] = 1 if hour >= 20 or hour <= 6 else 0
@@ -257,7 +250,7 @@ feature_dict['is_civil_twilight'] = 1 if hour in [6, 7, 19, 20] else 0
 feature_dict['Junction'] = 1 if has_junction else 0
 feature_dict['Traffic_Signal'] = 1 if has_traffic_signal else 0
 feature_dict['Crossing'] = 1 if has_crossing else 0
-feature_dict['Amenity'] = 0
+feature_dict['Amenity'] = 0  # Default
 feature_dict['Bump'] = 1 if has_bump else 0
 feature_dict['Give_Way'] = 0
 feature_dict['No_Exit'] = 0
@@ -268,68 +261,75 @@ feature_dict['Stop'] = 0
 feature_dict['Traffic_Calming'] = 0
 feature_dict['Turning_Loop'] = 0
 
-# Add interaction features if they exist in feature_columns
-interaction_features = ['rain_during_rush', 'night_rain_snow', 'cold_snow', 
-                       'weather_severity', 'signal_rain', 'signal_snow', 'is_friday_night']
+# Create DataFrame with features in correct order
 
-for feat in interaction_features:
-    if feat in feature_columns:
-        if feat == 'rain_during_rush':
-            feature_dict[feat] = (feature_dict.get('weather_Rain', 0) == 1) and (is_rush_hour == 1)
-        elif feat == 'night_rain_snow':
-            feature_dict[feat] = (feature_dict.get('is_night', 0) == 1) and \
-                               ((feature_dict.get('weather_Rain', 0) == 1) or (feature_dict.get('weather_Snow', 0) == 1))
-        elif feat == 'cold_snow':
-            feature_dict[feat] = (temperature < 32) and (feature_dict.get('weather_Snow', 0) == 1)
-        elif feat == 'weather_severity':
-            feature_dict[feat] = (feature_dict.get('weather_Rain', 0) * 2) + \
-                               (feature_dict.get('weather_Snow', 0) * 4) + \
-                               (feature_dict.get('weather_Fog', 0) * 1) + \
-                               ((visibility < 2) * 2)
-        elif feat == 'signal_rain':
-            feature_dict[feat] = feature_dict.get('Traffic_Signal', 0) * feature_dict.get('weather_Rain', 0)
-        elif feat == 'signal_snow':
-            feature_dict[feat] = feature_dict.get('Traffic_Signal', 0) * feature_dict.get('weather_Snow', 0)
-        elif feat == 'is_friday_night':
-            feature_dict[feat] = (feature_dict.get('day_of_week', 0) == 4) and (feature_dict.get('is_night', 0) == 1)
-        else:
-            feature_dict[feat] = 0
 
+
+# try:
+#     X = pd.DataFrame([feature_dict])[feature_columns]
+# except KeyError as e:
+#     st.error(f"Missing feature column: {e}")
+#     st.stop()
+
+
+
+
+
+# Create DataFrame (later correction)
 
 # CREATE MODEL INPUT
 
 
+X = pd.DataFrame([feature_dict])
+
+# Add missing columns
+for col in feature_columns:
+    if col not in X.columns:
+        X[col] = 0
+
+# Keep exact feature order
+X = X.reindex(columns=feature_columns, fill_value=0)
+
+# Convert all values to numeric
+X = X.apply(pd.to_numeric, errors="coerce").fillna(0)
+
+
+
+
+
+
+st.write("Feature count expected:", len(feature_columns))
+st.write("Feature count supplied:", len(X.columns))
+
+
+
+# MAKE PREDICTION
+
+
+
+# MAKE PREDICTION
+
+
 try:
-    # Create DataFrame
-    X = pd.DataFrame([feature_dict])
-    
-    # Add missing columns with default value 0
-    for col in feature_columns:
-        if col not in X.columns:
-            X[col] = 0
-    
-    # Keep exact feature order and convert to numeric
-    X = X[feature_columns].astype(float)
-    
-except Exception as e:
-    st.error(f"❌ Error preparing features: {e}")
-    st.stop()
+    # Ensure numeric types
+    X = X.astype(float)
 
-
-# MAKE PREDICTION WITH OPTIMAL THRESHOLD
-
-
-try:
-    # Get prediction probability
+    # Predict directly using XGBoost
     prediction_proba = model.predict_proba(X)[0]
     severity_prob = float(prediction_proba[1])
-    
-    # Apply optimal threshold (NOT default 0.5)
-    prediction = 1 if severity_prob > OPTIMAL_THRESHOLD else 0
-    severity_label = "SEVERE ⚠️" if prediction == 1 else "NON-SEVERE ✅"
-    
+
+    prediction = model.predict(X)[0]
+    severity_label = "SEVERE" if prediction == 1 else "NON-SEVERE"
+
 except Exception as e:
-    st.error(f"❌ Prediction Error: {e}")
+    st.error(f"Prediction Error: {e}")
+
+    st.write("Expected Features:", len(feature_columns))
+    st.write("Input Shape:", X.shape)
+
+    st.write("Missing Features:")
+    st.write([c for c in feature_columns if c not in X.columns])
+
     st.stop()
 
 
@@ -341,7 +341,7 @@ st.markdown("## 📊 Prediction Results")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    # Risk probability with color coding
+    # Risk probability meter
     if severity_prob >= 0.06:
         risk_color = "#f5576c"  # Red
         risk_text = "🔴 HIGH RISK"
@@ -369,9 +369,9 @@ with col2:
     )
 
 with col3:
-    # Relative risk vs baseline
-    baseline_rate = final_metrics.get('f1', 0.56) / 100 if final_metrics.get('f1', 0.56) > 1 else 0.03
-    relative_risk = severity_prob / baseline_rate if baseline_rate > 0 else severity_prob / 0.03
+    # Comparison to baseline
+    baseline_rate = 0.03  # 3% severe rate from training data
+    relative_risk = severity_prob / baseline_rate
     st.metric(
         label="Relative Risk",
         value=f"{relative_risk:.1f}x",
@@ -381,9 +381,10 @@ with col3:
 st.divider()
 
 
-# VISUAL GAUGE CHART
+# VISUAL GAUGE
 
 
+# Create gauge chart
 fig = go.Figure(data=[
     go.Indicator(
         mode="gauge+number+delta",
@@ -500,21 +501,21 @@ feature_display = pd.DataFrame({
 
 st.dataframe(feature_display, use_container_width=True, hide_index=True)
 
-st.divider()
-
 
 # FOOTER
 
 
+st.divider()
+
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.markdown(f"""
+    st.markdown("""
     **📚 Model Details:**
     - Algorithm: XGBoost
-    - Features: {len(feature_columns)}
-    - Precision: {final_metrics.get('precision', 0.48):.1%}
-    - Threshold: {OPTIMAL_THRESHOLD}
+    - Training Data: 1395932 accidents
+    - Features: 36
+    - Accuracy: 78% precision on severe
     """)
 
 # with col2:
@@ -528,12 +529,12 @@ with col1:
 with col3:
     st.markdown("""
     **🔗 Resources:**
-    - Data: 1744915 California Accidents (2016-2023)
-    - Built with: Streamlit + XGBoost
-    
+    - [GitHub Repo](#)
+    - [Full Analysis](#)
+    -
     """)
 
-# st.markdown("""
-# ---
-# *Last Updated: 2024 | Model Version: v2.0 (Optimized Threshold)*
-# """)
+st.markdown("""
+---
+*Built with Streamlit | Data:1,744,91 US Accidents for California (2016-2023)*
+""")
